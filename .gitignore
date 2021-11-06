@@ -1,0 +1,6 @@
+# Exclude list:
+*.tfvars
+*.tfstate
+*.tfstate.backup
+*.lock.hcl
+.terraform/
