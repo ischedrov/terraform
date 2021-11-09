@@ -1,6 +1,6 @@
 provider "aws" {}
 
-#Declare local variables. It's globale specify tags for all resources
+#Declare local variables. It's global specify tags for all resources
 
 locals {
   commonTags = {
@@ -9,8 +9,6 @@ locals {
     Purpose     = "For own website"
   }
 }
-
-#Creating VPC
 
 resource "aws_vpc" "webSite" {
   cidr_block       = var.vpcCidrBlock
@@ -33,96 +31,61 @@ resource "aws_default_route_table" "PublicRouteTable" {
   tags = merge(local.commonTags, { Name = "Public Route Table" })
 }
 
-resource "aws_route_table" "privateRouteTable1" {
-  vpc_id = aws_vpc.webSite.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.NatGW1.id
-  }
-  tags = merge(local.commonTags, { Name = "Private Route Table 1" })
-}
-
-resource "aws_route_table" "privateRouteTable2" {
-  vpc_id = aws_vpc.webSite.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.NatGW2.id
-  }
-  tags = merge(local.commonTags, { Name = "Private Route Table 2" })
-}
-
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
-resource "aws_subnet" "publicSubnet1" {
-  vpc_id                  = aws_vpc.webSite.id
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  cidr_block              = var.PublicSubnet1Cidr
-  map_public_ip_on_launch = true
-  tags                    = merge(local.commonTags, { Name = "Public Subnet 1" })
+resource "aws_eip" "EipNatGWs" {
+  count = length(var.PrivateSubnetsCidr)
+  tags  = merge(local.commonTags, { Name = "EIP for NAT GW ${count.index}" })
 }
 
-resource "aws_route_table_association" "publicSubnet1" {
-  subnet_id      = aws_subnet.publicSubnet1.id
+resource "aws_nat_gateway" "NatGWs" {
+  count         = length(aws_eip.EipNatGWs[*].id)
+  allocation_id = aws_eip.EipNatGWs[count.index].id
+  subnet_id     = element(aws_subnet.PrivateSubnets[*].id, count.index)
+  tags          = merge(local.commonTags, { Name = "NAT GW ${count.index}" })
+}
+
+resource "aws_subnet" "PublicSubnets" {
+  count                   = length(var.PublicSubnetsCidr)
+  vpc_id                  = aws_vpc.webSite.id
+  map_public_ip_on_launch = true
+  cidr_block              = element(var.PublicSubnetsCidr, count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  tags                    = merge(local.commonTags, { Name = "Public Subnet ${count.index + 1}" })
+}
+
+resource "aws_route_table_association" "PublicRoutes" {
+  count          = length(aws_subnet.PublicSubnets[*].id)
+  subnet_id      = element(aws_subnet.PublicSubnets[*].id, count.index)
   route_table_id = aws_default_route_table.PublicRouteTable.id
 }
 
-resource "aws_subnet" "publicSubnet2" {
-  vpc_id                  = aws_vpc.webSite.id
-  availability_zone       = data.aws_availability_zones.available.names[1]
-  cidr_block              = var.PublicSubnet2Cidr
-  map_public_ip_on_launch = true
-  tags                    = merge(local.commonTags, { Name = "Public Subnet 2" })
-}
-
-resource "aws_route_table_association" "publicSubnet2" {
-  subnet_id      = aws_subnet.publicSubnet2.id
-  route_table_id = aws_default_route_table.PublicRouteTable.id
-}
-
-resource "aws_subnet" "privateSubnet1" {
+resource "aws_subnet" "PrivateSubnets" {
+  count             = length(var.PrivateSubnetsCidr)
   vpc_id            = aws_vpc.webSite.id
-  availability_zone = data.aws_availability_zones.available.names[0]
-  cidr_block        = var.PrivateSubnet1Cidr
-  tags              = merge(local.commonTags, { Name = "Private Subnet 1" })
+  cidr_block        = element(var.PrivateSubnetsCidr, count.index)
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+  tags              = merge(local.commonTags, { Name = "Private Subnet ${count.index + 1}" })
 }
 
-resource "aws_route_table_association" "privateSubnet1" {
-  subnet_id      = aws_subnet.privateSubnet1.id
-  route_table_id = aws_route_table.privateRouteTable1.id
+resource "aws_route_table" "privateRouteTables" {
+  count  = length(var.PrivateSubnetsCidr)
+  vpc_id = aws_vpc.webSite.id
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.NatGWs[count.index].id
+  }
+  tags = merge(local.commonTags, { Name = "Private Route Table ${count.index + 1}" })
 }
 
-resource "aws_subnet" "privateSubnet2" {
-  vpc_id            = aws_vpc.webSite.id
-  availability_zone = data.aws_availability_zones.available.names[1]
-  cidr_block        = var.PrivateSubnet2Cidr
-  tags              = merge(local.commonTags, { Name = "Private Subnet 2" })
+resource "aws_route_table_association" "name" {
+  count          = length(aws_subnet.PrivateSubnets[*].id)
+  subnet_id      = aws_subnet.PrivateSubnets[count.index].id
+  route_table_id = aws_route_table.privateRouteTables[count.index].id
 }
-
-resource "aws_route_table_association" "privateSubnet2" {
-  subnet_id      = aws_subnet.privateSubnet2.id
-  route_table_id = aws_route_table.privateRouteTable2.id
-}
-resource "aws_eip" "EipNatGW1" {
-  tags = merge(local.commonTags, { Name = "EIP for NAT GW1" })
-}
-
-resource "aws_eip" "EipNatGW2" {
-  tags = merge(local.commonTags, { Name = "EIP for NAT GW2" })
-}
-resource "aws_nat_gateway" "NatGW1" {
-  subnet_id     = aws_subnet.publicSubnet1.id
-  allocation_id = aws_eip.EipNatGW1.id
-  tags          = merge(local.commonTags, { Name = "NAT GW 1" })
-}
-
-resource "aws_nat_gateway" "NatGW2" {
-  allocation_id = aws_eip.EipNatGW2.id
-  subnet_id     = aws_subnet.publicSubnet2.id
-  tags          = merge(local.commonTags, { Name = "NAT GW 2" })
-}
-
+/*
 resource "aws_security_group" "albGroup" {
   name        = "Allow_HTTP_ALB"
   vpc_id      = aws_vpc.webSite.id
@@ -146,7 +109,7 @@ resource "aws_security_group" "albGroup" {
   tags = merge(local.commonTags, { Name = "Allow HTTP" })
 
 }
-
+/*
 resource "aws_security_group" "asgGroup" {
   name        = "Allow_HTTP_ASG_from_ALB"
   vpc_id      = aws_vpc.webSite.id
@@ -199,6 +162,7 @@ resource "aws_elb" "classicLB" {
     interval            = 10
   }
 }
+/////////////////////
 /* FOR FUTURE PURPOSES
 
 resource "aws_lb" "alb" {
@@ -208,7 +172,7 @@ resource "aws_lb" "alb" {
   security_groups    = [aws_security_group.asgGroup.id]
   subnets            = [aws_subnet.publicSubnet1.id, aws_subnet.publicSubnet2.id]
 }
-*/
+////////////////////
 resource "aws_launch_template" "webSiteTemplate" {
   name                   = "Website_node_template"
   instance_type          = "t2.micro"
@@ -230,3 +194,4 @@ resource "aws_autoscaling_group" "webSite" {
   load_balancers      = [aws_elb.classicLB.name]
 }
 
+*/
